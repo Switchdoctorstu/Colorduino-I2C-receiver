@@ -1,19 +1,31 @@
 /* Colorduino I2C handler
-
+ *	This code is free software; you can redistribute it and/or
+ *	modify it under the terms of the GNU Lesser General Public
+ *	License as published by the Free Software Foundation; either
+ *	version 2.1 of the License, or (at your option) any later version.
+ *	
+ *	This library is distributed in the hope that it will be useful,
+ *	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ *	Lesser General Public License for more details.
 
 Understands Type 1 = char
 			Type 2 = raster
 			Type 3 = flip buffer
 			Type 4 = Clear Screen
-building clear screen and flip page commands
 
+			
 fixed packet lengths at 16 bytes
 
 sorted timing issues... Careful with receive packet
 Stuart Oldfield 2015
 
+Thank you to too many web sites and sources from which i cut and copied and hacked
+this together.
 
-
+Working on:
+Optimisation 
+Serial Bus Chaining for auto module identification
 
 */
 
@@ -24,21 +36,20 @@ Stuart Oldfield 2015
 #include <Wire.h>
 #define MODULEADDRESS 7 
 #define BUFFERLENGTH 32 // 2 packets?
+#define SERIALBUFFERLENGTH 64
 #define CHARDISPLAY 1
 #define BMPDISPLAY 2 
 
-#define DEBUGI2C false
+#define DEBUGI2C true
 #define DEBUGDISPLAY true
 
-typedef struct
-{
+typedef struct {
   unsigned char r;
   unsigned char g;
   unsigned char b;
 } ColorRGB;
 
-typedef struct 
-{
+typedef struct {
   unsigned char h;
   unsigned char s;
   unsigned char v;
@@ -146,6 +157,9 @@ const unsigned char font_5x7[][5] = { // font array
 // setup receive buffers 
 char receivebuffer[BUFFERLENGTH];
 char wirebuffer[BUFFERLENGTH];
+char serialbuffer[SERIALBUFFERLENGTH];
+boolean serialpacketavailable=false;
+int serialcursor=0;
 int buffercursor=0;
 int oldbuffercursor=0;
 int packets=0;
@@ -166,10 +180,9 @@ void receiveEvent(int howMany) {
 			buffercursor++;
 			if ((buffercursor>=16)&&(c==0x0d)){
 				packetAvailable=true;
-			if(DEBUGI2C){
-				Serial.println("M:"+ String(moduleID)+" Len"+String(buffercursor));
-			}
-		
+				if(DEBUGI2C){
+					Serial.println("M:"+ String(moduleID)+" Len"+String(buffercursor));
+				}		
 			}
 		} 
 		else{
@@ -197,12 +210,46 @@ void setup() {
   Wire.begin(MODULEADDRESS);                // join i2c bus with address set at top
   Wire.onReceive(receiveEvent); // register event
   Serial.begin(19200);           // start serial for output
- Serial.println("Hello");
-
+	if(DEBUGDISPLAY)Serial.println("DEBUGDISPLAY");
+	if(DEBUGI2C)Serial.println("DEBUGI2C");
+	
 }
 
 void loop(){
   if(packetAvailable) packet();
+  if(Serial.available()>0)
+			{
+			GetSerialData();
+		}
+	if(serialpacketavailable){
+		checkmessage();
+	}
+}
+
+void checkmessage(){  
+
+// See if the message is for us
+	if(serialbuffer[0]==moduleID){
+		// say hi
+		Serial.println(String(moduleID));
+	}
+	serialcursor=0;
+	serialpacketavailable=false;
+}
+
+void GetSerialData(){
+	char lf = 0x0A;
+	char c =Serial.read();
+	serialbuffer[serialcursor]=c;
+	if(c==lf){
+		serialpacketavailable=true;
+	}	
+	if(serialcursor<SERIALBUFFERLENGTH){
+		serialcursor++;
+	}
+	else{
+		serialcursor=0; // wrap the buffer 
+	}
 }
 
 void packet(){
@@ -332,6 +379,19 @@ void packet(){
 		case 3:{
 			Colorduino.FlipPage();
 			break;
+		}
+		case 4:{
+			// clear screen to 
+			// protocol goes:
+			//  0 	stx
+			//  1 	0x04   = type 4 = Fill
+			//  2 	red
+			// 	3	green
+			//	4  	blue
+			red=receivebuffer[2];
+			blue=receivebuffer[3];
+			green=receivebuffer[4];
+			ColorFill(red,blue,green);
 		}
 	}
 }
